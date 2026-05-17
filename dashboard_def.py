@@ -282,7 +282,7 @@ app.layout = html.Div([
                     style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
             dcc.Tab(label="🎯 Análise de Treinamento",  value="tab-training",
                     style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
-            dcc.Tab(label="🔬 Análise T-SNE",           value="tab-tsne",
+            dcc.Tab(label="🔬 Predição da lesão",           value="tab-tsne",
                     style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
         ], style={"borderBottom": "1px solid #E8E8E8"},
            colors={"border": "transparent", "primary": "transparent",
