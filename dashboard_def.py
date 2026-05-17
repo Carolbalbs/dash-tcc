@@ -262,11 +262,6 @@ app.layout = html.Div([
             ], style={"display": "flex", "flexWrap": "wrap", "gap": "8px",
                       "marginTop": "14px"}),
         ], style={"flex": "1"}),
-        html.Div("iii plotly", style={
-            "color": "#fff", "fontSize": "20px", "fontWeight": "700",
-            "fontFamily": FONT_MONO, "letterSpacing": "2px",
-            "alignSelf": "flex-start", "paddingTop": "6px",
-        }),
     ], style={
         "background": f"linear-gradient(135deg,{PLUM} 0%,{PLUM_L} 60%,#3a1a2e 100%)",
         "padding": "32px 40px", "display": "flex", "gap": "24px",
