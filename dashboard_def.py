@@ -235,6 +235,7 @@ def load_run_summary(dataset_type, run_name):
 # ──────────────────────────────────────────────────────────────────────────────
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
 app.title = "Dashboard de Análise TCC — Cistos Odontogênicos"
+server = app.server
 
 # ── Layout ─────────────────────────────────────────────────────────────────────
 app.layout = html.Div([

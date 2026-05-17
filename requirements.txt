@@ -1,8 +1,8 @@
-dash 
+dash
 plotly
-pandas 
+pandas
 numpy
-os
-glob
-base64
-io
+scikit-learn
+Pillow
+tensorflow-cpu
+gunicorn
