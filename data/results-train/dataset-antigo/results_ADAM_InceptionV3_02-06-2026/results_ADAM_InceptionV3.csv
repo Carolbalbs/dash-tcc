@@ -1,0 +1,18 @@
+Classes;axiais_ameloblastoma_augmentado, axiais_queratocisto_augmentado
+Total imagens;2399
+Otimizador;ADAM
+Modelo;InceptionV3
+;
+Fold;Accuracy (%)
+Fold 1;98.54
+Fold 2;99.17
+Fold 3;98.33
+Fold 4;99.17
+Fold 5;98.12
+;
+Métrica;Valor
+Média Accuracy;98.67%
+Desvio Padrão;0.43%
+IC 95% Inferior;98.07%
+IC 95% Superior;99.26%
+Tempo de execução (min);123.75

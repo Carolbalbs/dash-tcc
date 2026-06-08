@@ -12,12 +12,17 @@ from io import BytesIO
 # ──────────────────────────────────────────────────────────────────────────────
 # Configurações de paths
 # ──────────────────────────────────────────────────────────────────────────────
-DATASET_DIM_PATH = "dimensoes-dataset"
-RESULTS_DIM = {
-    "Antigo": "datasets/Resultado_dataset-antigo",
-    "Novo":   "datasets/Resultado_dataset-novo",
-}
+# Usando paths relativos ao diretório do script para maior flexibilidade
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATASET_DIM_PATH = os.path.join(BASE_DIR, "data/dimensoes-dataset")
+RESULTS_TRAIN_BASE = os.path.join(BASE_DIR, "data/results-train")
 
+# Mapeamento para as subpastas físicas
+SESSION_FOLDER_MAP = {
+    "Novo": "dataset-novo",
+    "Antigo": "dataset-antigo",
+    "3 Classes": "dataset-3class"
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Paleta de cores e estilos DDK
@@ -185,16 +190,41 @@ def dropdown(id_, options, value, label=""):
 # Dados auxiliares (funções de leitura)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def get_training_runs(dataset_type):
-    base = RESULTS_DIM.get(dataset_type, "")
-    if not base or not os.path.exists(base):
+def get_training_runs(dataset_type, optimizer):
+    subfolder = SESSION_FOLDER_MAP.get(dataset_type)
+    if not subfolder:
         return []
-    runs = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
+    
+    target_path = os.path.join(RESULTS_TRAIN_BASE, subfolder)
+    if not os.path.exists(target_path):
+        return []
+    
+    all_runs = [d for d in os.listdir(target_path) if os.path.isdir(os.path.join(target_path, d))]
+    
+    # Filtro de otimizador
+    runs = [r for r in all_runs if optimizer.upper() in r.upper()]
+    
     return sorted(runs)
 
 
+def get_run_options(dataset_type, optimizer):
+    runs = get_training_runs(dataset_type, optimizer)
+    options = []
+    for r in runs:
+        parts = r.split("_")
+        # Se for results_ADAM_InceptionV3_DATE
+        date_label = "_".join([p for p in parts[-3:] if p]) if len(parts) >= 3 else r
+        options.append({"label": date_label, "value": r})
+    return options
+
+
 def load_training_data(dataset_type, run_name):
-    path = os.path.join(RESULTS_DIM[dataset_type], run_name)
+    if not run_name or not dataset_type:
+        return pd.DataFrame()
+    
+    subfolder = SESSION_FOLDER_MAP.get(dataset_type)
+    path = os.path.join(RESULTS_TRAIN_BASE, subfolder, run_name)
+    
     log_files = glob.glob(os.path.join(path, "log_Fold*.csv"))
     all_data = []
     for f in log_files:
@@ -208,26 +238,30 @@ def load_training_data(dataset_type, run_name):
     return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
 
 
-def load_dim_csv(dataset_type):
-    path = os.path.join(DATASET_DIM_PATH, f"image_dimensions_dataset_{dataset_type}.csv")
-    if not os.path.exists(path):
-        return pd.DataFrame()
-    return pd.read_csv(path)
-
-
 def load_run_summary(dataset_type, run_name):
     """Carrega o arquivo results_*.csv se existir na pasta do treino."""
-    path = os.path.join(RESULTS_DIM[dataset_type], run_name)
+    if not run_name or not dataset_type:
+        return pd.DataFrame()
+    
+    subfolder = SESSION_FOLDER_MAP.get(dataset_type)
+    path = os.path.join(RESULTS_TRAIN_BASE, subfolder, run_name)
+    
     files = glob.glob(os.path.join(path, "results_*.csv"))
     if not files:
         return pd.DataFrame()
     try:
-        # Pega o primeiro que encontrar
         df = pd.read_csv(files[0], sep=";")
         return df
     except Exception as e:
         print(f"Erro ao carregar sumário {files[0]}: {e}")
         return pd.DataFrame()
+
+
+def load_dim_csv(dataset_type):
+    path = os.path.join(DATASET_DIM_PATH, f"image_dimensions_dataset_{dataset_type}.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    return pd.read_csv(path)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -292,6 +326,125 @@ app.layout = html.Div([
 ], style={"background": PAGE_BG, "minHeight": "100vh"})
 
 
+def get_training_session(session_id, title):
+    return html.Div([
+        section_title(f"📁 {title}"),
+        # Filtros (Adam e RMSProp)
+        html.Div([
+            html.Div([
+                dropdown(f"{session_id}-adam-sel", [], None, "Otimizador ADAM (por data)"),
+            ], style={"flex": "1", "minWidth": "240px"}),
+            html.Div([
+                dropdown(f"{session_id}-rmsprop-sel", [], None, "Otimizador RMSPROP (por data)"),
+            ], style={"flex": "1", "minWidth": "240px"}),
+        ], style={**card_style, "padding": "16px", "display": "flex",
+                  "flexWrap": "wrap", "gap": "16px", "marginBottom": "16px"}),
+
+        # Gráficos
+        html.Div(id=f"{session_id}-charts"),
+    ], style={"marginBottom": "48px"})
+
+
+def get_training_summary_metrics(dataset_type, run_name):
+    """Extrai métricas específicas do arquivo results_*.csv para os KPI Cards."""
+    if not run_name or not dataset_type:
+        return {}
+    
+    subfolder = SESSION_FOLDER_MAP.get(dataset_type)
+    path = os.path.join(RESULTS_TRAIN_BASE, subfolder, run_name)
+    files = glob.glob(os.path.join(path, "results_*.csv"))
+    if not files:
+        return {}
+    
+    metrics = {}
+    try:
+        # Lendo como texto para lidar com o formato misto do CSV
+        with open(files[0], 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            for line in lines:
+                parts = line.strip().split(';')
+                if len(parts) < 2: continue
+                key = parts[0].strip()
+                val = parts[1].strip()
+                
+                if "Média Accuracy" in key:
+                    metrics["avg_acc"] = val
+                elif "Desvio Padrão" in key:
+                    metrics["std_dev"] = val
+                elif "Tempo de execução" in key:
+                    metrics["exec_time"] = f"{val} min"
+                elif key.startswith("Fold"):
+                    # Encontra a melhor acurácia entre os folds
+                    try:
+                        acc_val = float(val.replace('%', ''))
+                        if "best_fold" not in metrics or acc_val > float(metrics["best_fold"].replace('%', '')):
+                            metrics["best_fold"] = val
+                    except: pass
+    except Exception as e:
+        print(f"Erro ao extrair KPIs de {run_name}: {e}")
+    return metrics
+
+
+def build_comparison_charts(dataset_type, adam_run, rmsprop_run):
+    df_adam = load_training_data(dataset_type, adam_run)
+    df_rms = load_training_data(dataset_type, rmsprop_run)
+    
+    if df_adam.empty and df_rms.empty:
+        return html.Div("Nenhum dado encontrado para esta sessão. Verifique os dropdowns acima.",
+                        style={"color": MUTED, "fontFamily": FONT_SANS, "padding": "20px",
+                               "textAlign": "center", **card_style})
+
+    # Extração de KPIs
+    kpi_data_adam = get_training_summary_metrics(dataset_type, adam_run)
+    kpi_data_rms = get_training_summary_metrics(dataset_type, rmsprop_run)
+
+    def make_kpi_group(data, opt_name, color):
+        if not data: return html.Div()
+        return html.Div([
+            html.Div(f"🚀 Métricas {opt_name}", style={
+                "fontSize": "14px", "fontWeight": "700", "color": color,
+                "marginBottom": "10px", "fontFamily": FONT_SANS, "marginLeft": "4px"
+            }),
+            html.Div([
+                kpi_card("Melhor Fold (%)", data.get("best_fold", "—")),
+                kpi_card("Média Accuracy",   data.get("avg_acc", "—")),
+                kpi_card("Desvio Padrão",    data.get("std_dev", "—")),
+                kpi_card("Tempo Total",      data.get("exec_time", "—")),
+            ], style={"display": "flex", "flexWrap": "wrap", "gap": "12px"}),
+        ], style={"flex": "1", "minWidth": "300px", "marginBottom": "20px"})
+
+    kpi_row = html.Div([
+        make_kpi_group(kpi_data_adam, "ADAM", PLUM),
+        make_kpi_group(kpi_data_rms, "RMSPROP", "#12a1e4"),
+    ], style={"display": "flex", "gap": "20px", "flexWrap": "wrap", "marginBottom": "10px"})
+
+    # Função interna para gerar gráficos pareados
+    def make_pair(metric, title, id_prefix):
+        fig_adam = px.line(df_adam, x="epoch", y=metric, color="Fold", title=f"ADAM - {title}") if not df_adam.empty else go.Figure()
+        fig_rms = px.line(df_rms, x="epoch", y=metric, color="Fold", title=f"RMSPROP - {title}") if not df_rms.empty else go.Figure()
+        
+        for f in [fig_adam, fig_rms]:
+            f.update_layout(**LAYOUT_COMMON)
+            
+        # Adiciona o dataset_type ao prefixo para evitar IDs duplicados entre sessões
+        clean_ds = dataset_type.lower().replace(" ", "-")
+        return two_col(fig_adam, fig_rms, height=300, id_prefix=f"{clean_ds}-{id_prefix}")
+
+    # Tabelas de sumário
+ 
+    
+    summary_row = html.Div()
+    
+    return html.Div([
+        kpi_row,
+        summary_row,
+        make_pair("accuracy", "Acurácia de Treino", "acc-tr"),
+        make_pair("val_accuracy", "Acurácia de Validação", "acc-val"),
+        make_pair("loss", "Loss de Treino", "loss-tr"),
+        make_pair("val_loss", "Loss de Validação", "loss-val"),
+    ])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CALLBACK: renderiza a tab
 # ══════════════════════════════════════════════════════════════════════════════
@@ -310,38 +463,9 @@ def render_tab(tab):
     # ── TAB 2: Análise de Treinamento ────────────────────────────────────────
     elif tab == "tab-training":
         return html.Div([
-            # Filtros
-            html.Div([
-                html.Div([
-                    dropdown("train-ds-sel",
-                             [{"label": "Antigo", "value": "Antigo"},
-                              {"label": "Novo",   "value": "Novo"}],
-                             "Antigo", "Dataset"),
-                ], style={"flex": "1", "minWidth": "180px"}),
-                html.Div([
-                    dropdown("run-sel", [], None, "Treinamento"),
-                ], style={"flex": "2", "minWidth": "260px"}),
-                html.Div([
-                    dropdown("compare-ds-sel",
-                             [{"label": "Nenhum",  "value": "none"},
-                              {"label": "Antigo",  "value": "Antigo"},
-                              {"label": "Novo",    "value": "Novo"}],
-                             "none", "Comparar com Dataset"),
-                ], style={"flex": "1", "minWidth": "180px"}),
-                html.Div([
-                    dropdown("compare-run-sel", [{"label":"—","value":"none"}],
-                             "none", "Treinamento para comparar"),
-                ], style={"flex": "2", "minWidth": "260px"}),
-            ], style={**card_style, "padding": "16px", "display": "flex",
-                      "flexWrap": "wrap", "gap": "16px", "marginBottom": "20px"}),
-
-            # KPIs de treinamento
-            html.Div(id="train-kpis",
-                     style={"display": "flex", "flexWrap": "wrap",
-                             "gap": "12px", "marginBottom": "20px"}),
-
-            # Gráficos
-            html.Div(id="train-charts"),
+            get_training_session("ds-novo", "Dataset Novo"),
+            get_training_session("ds-antigo", "Dataset Antigo"),
+            get_training_session("ds-3cl", "Dataset com 3 Classes"),
         ])
 
     # ── TAB 3: Análise T-SNE ─────────────────────────────────────────────────
@@ -514,192 +638,98 @@ def get_dataset_components(ds_type):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — ANÁLISE DE TREINAMENTO
+# TAB 2 — ANÁLISE DE TREINAMENTO (SESSÕES)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# --- Session: NOVO ---
 @app.callback(
-    Output("run-sel", "options"),
-    Output("run-sel", "value"),
-    Input("train-ds-sel", "value"),
+    Output("ds-novo-adam-sel", "options"),
+    Output("ds-novo-adam-sel", "value"),
+    Input("main-tabs", "value"),
 )
-def update_run_options(ds):
-    runs = get_training_runs(ds)
-    opts = [{"label": r, "value": r} for r in runs]
-    return opts, (runs[0] if runs else None)
-
-
-@app.callback(
-    Output("compare-run-sel", "options"),
-    Output("compare-run-sel", "value"),
-    Input("compare-ds-sel", "value"),
-)
-def update_compare_run(ds):
-    if ds == "none":
-        return [{"label": "—", "value": "none"}], "none"
-    runs = get_training_runs(ds)
-    opts = [{"label": "—", "value": "none"}] + [{"label": r, "value": r} for r in runs]
-    return opts, "none"
-
+def update_novo_adam(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("Novo", "ADAM")
+    return opts, (opts[0]["value"] if opts else None)
 
 @app.callback(
-    Output("train-kpis",   "children"),
-    Output("train-charts", "children"),
-    Input("train-ds-sel",     "value"),
-    Input("run-sel",          "value"),
-    Input("compare-ds-sel",   "value"),
-    Input("compare-run-sel",  "value"),
+    Output("ds-novo-rmsprop-sel", "options"),
+    Output("ds-novo-rmsprop-sel", "value"),
+    Input("main-tabs", "value"),
 )
-def update_training(ds, run, cmp_ds, cmp_run):
-    if not run:
-        return [], html.Div("Selecione um treinamento.",
-                            style={"color": MUTED, "fontFamily": FONT_SANS,
-                                   "padding": "20px"})
+def update_novo_rms(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("Novo", "RMSPROP")
+    return opts, (opts[0]["value"] if opts else None)
 
-    df = load_training_data(ds, run)
-    if df.empty:
-        return [], html.Div("Nenhum log CSV encontrado.",
-                            style={"color": MUTED, "fontFamily": FONT_SANS,
-                                   "padding": "20px"})
+@app.callback(
+    Output("ds-novo-charts", "children"),
+    Input("ds-novo-adam-sel", "value"),
+    Input("ds-novo-rmsprop-sel", "value"),
+)
+def update_novo_charts(adam, rms):
+    return build_comparison_charts("Novo", adam, rms)
 
-    # KPIs
-    best = df.groupby("Fold").agg(
-        {"val_accuracy": "max", "accuracy": "max",
-         "val_loss": "min", "loss": "min"}
-    )
-    kpis = [
-        kpi_card("Melhor Val Accuracy", f"{best['val_accuracy'].max():.4f}"),
-        kpi_card("Melhor Accuracy",     f"{best['accuracy'].max():.4f}"),
-        kpi_card("Menor Val Loss",      f"{best['val_loss'].min():.4f}"),
-        kpi_card("Menor Loss",          f"{best['loss'].min():.4f}"),
-        kpi_card("Folds",               str(df['Fold'].nunique())),
-    ]
 
-    # Gráficos base
-    
-    fig_acc = px.line(df, x="epoch", y="accuracy",     color="Fold",
-                      title=f"Acurácia Treino — {run}")
-    fig_vac = px.line(df, x="epoch", y="val_accuracy", color="Fold",
-                      title=f"Acurácia Validação — {run}")
-    fig_los = px.line(df, x="epoch", y="loss",         color="Fold",
-                      title=f"Loss Treino — {run}")
-    fig_vlo = px.line(df, x="epoch", y="val_loss",     color="Fold",
-                      title=f"Loss Validação — {run}")
+# --- Session: ANTIGO ---
+@app.callback(
+    Output("ds-antigo-adam-sel", "options"),
+    Output("ds-antigo-adam-sel", "value"),
+    Input("main-tabs", "value"),
+)
+def update_antigo_adam(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("Antigo", "ADAM")
+    return opts, (opts[0]["value"] if opts else None)
 
-    for f in [fig_acc, fig_vac, fig_los, fig_vlo]:
-        f.update_layout(**LAYOUT_COMMON)
+@app.callback(
+    Output("ds-antigo-rmsprop-sel", "options"),
+    Output("ds-antigo-rmsprop-sel", "value"),
+    Input("main-tabs", "value"),
+)
+def update_antigo_rms(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("Antigo", "RMSPROP")
+    return opts, (opts[0]["value"] if opts else None)
 
-    # Comparação (se selecionada)
-    compare_block = html.Div()
-    if cmp_ds != "none" and cmp_run and cmp_run != "none":
-        df2 = load_training_data(cmp_ds, cmp_run)
-        if not df2.empty:
-            df["source"]  = f"{ds} / {run}"
-            df2["source"] = f"{cmp_ds} / {cmp_run}"
-            merged = pd.concat([df, df2], ignore_index=True)
+@app.callback(
+    Output("ds-antigo-charts", "children"),
+    Input("ds-antigo-adam-sel", "value"),
+    Input("ds-antigo-rmsprop-sel", "value"),
+)
+def update_antigo_charts(adam, rms):
+    return build_comparison_charts("Antigo", adam, rms)
 
-            fig_cmp_acc = px.line(merged, x="epoch", y="val_accuracy",
-                                  color="source", line_dash="source",
-                                  title="Comparação — Val Accuracy")
-            fig_cmp_los = px.line(merged, x="epoch", y="val_loss",
-                                  color="source", line_dash="source",
-                                  title="Comparação — Val Loss")
-            fig_cmp_acc.update_layout(**LAYOUT_COMMON)
-            fig_cmp_los.update_layout(**LAYOUT_COMMON)
 
-            compare_block = html.Div([
-                section_title("⚖ Comparação de Treinamentos"),
-                two_col(fig_cmp_acc, fig_cmp_los, id_prefix="compare"),
-            ], style={**card_style, "padding": "16px", "marginBottom": "16px"})
+# --- Session: 3 CLASSES ---
+@app.callback(
+    Output("ds-3cl-adam-sel", "options"),
+    Output("ds-3cl-adam-sel", "value"),
+    Input("main-tabs", "value"),
+)
+def update_3cl_adam(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("3 Classes", "ADAM")
+    return opts, (opts[0]["value"] if opts else None)
 
-    # Tabela melhores métricas (per-fold)
-    best_df = best.reset_index().round(4)
-    table_folds = html.Div([
-        section_title("🏆 Melhores Métricas por Fold (Logs CSV)"),
-        dash_table.DataTable(
-            data=best_df.to_dict("records"),
-            columns=[{"name": c, "id": c} for c in best_df.columns],
-            sort_action="native",
-            style_table={"overflowX": "auto"},
-            style_header={"backgroundColor": PLUM, "color": "#fff",
-                          "fontWeight": "600", "fontFamily": FONT_SANS,
-                          "fontSize": "12px"},
-            style_cell={"fontFamily": FONT_SANS, "fontSize": "12px",
-                        "padding": "8px", "textAlign": "left"},
-            style_data_conditional=[
-                {"if": {"row_index": "odd"}, "backgroundColor": "#fdf5f9"}
-            ],
-        ),
-    ], style={**card_style, "padding": "16px", "marginBottom": "16px"})
+@app.callback(
+    Output("ds-3cl-rmsprop-sel", "options"),
+    Output("ds-3cl-rmsprop-sel", "value"),
+    Input("main-tabs", "value"),
+)
+def update_3cl_rms(tab):
+    if tab != "tab-training": return [], None
+    opts = get_run_options("3 Classes", "RMSPROP")
+    return opts, (opts[0]["value"] if opts else None)
 
-    # Tabela Sumário (results_*.csv)
-    summary_df = load_run_summary(ds, run)
-    summary_block = html.Div()
-    fig_summary = None
-    if not summary_df.empty:
-        # Tenta criar um gráfico de barras para as acurácias do sumário
-        try:
-            acc_df = summary_df[summary_df["Metric"].str.contains("Accuracy")].copy()
-            acc_df["Value_Num"] = acc_df["Value"].str.replace("%", "").astype(float)
-            fig_summary = px.bar(acc_df, x="Metric", y="Value_Num", 
-                                 title=f"Acurácias Finais — {run}",
-                                 text_auto='.2f', color="Metric")
-            fig_summary.update_layout(**LAYOUT_COMMON)
-            fig_summary.update_yaxes(range=[0, 100])
-        except:
-            fig_summary = None
+@app.callback(
+    Output("ds-3cl-charts", "children"),
+    Input("ds-3cl-adam-sel", "value"),
+    Input("ds-3cl-rmsprop-sel", "value"),
+)
+def update_3cl_charts(adam, rms):
+    return build_comparison_charts("3 Classes", adam, rms)
 
-        summary_block = html.Div([
-            section_title(f"📊 Sumário Final do Modelo — {run}"),
-            html.Div([
-                html.Div(dash_table.DataTable(
-                    data=summary_df.to_dict("records"),
-                    columns=[{"name": c, "id": c} for c in summary_df.columns],
-                    style_table={"overflowX": "auto"},
-                    style_header={"backgroundColor": "#333", "color": "#fff",
-                                  "fontWeight": "600", "fontFamily": FONT_SANS,
-                                  "fontSize": "12px"},
-                    style_cell={"fontFamily": FONT_SANS, "fontSize": "12px",
-                                "padding": "8px", "textAlign": "left"},
-                ), style={"flex": "1", "minWidth": "300px"}),
-                html.Div(dcc.Graph(id="summary-graph", figure=fig_summary, config={"displayModeBar": False}) if fig_summary else html.Div(),
-                         style={"flex": "1.5", "minWidth": "400px"})
-            ], style={"display": "flex", "gap": "20px", "flexWrap": "wrap"}),
-        ], style={**card_style, "padding": "16px", "marginBottom": "16px"})
-
-    # Comparação de Sumários (se selecionada)
-    compare_summary_block = html.Div()
-    if cmp_ds != "none" and cmp_run and cmp_run != "none":
-        summary_df2 = load_run_summary(cmp_ds, cmp_run)
-        if not summary_df2.empty and not summary_df.empty:
-            # Tenta alinhar métricas para comparação
-            m1 = summary_df.set_index("Metric")
-            m2 = summary_df2.set_index("Metric")
-            comp_sum = m1.join(m2, lsuffix=f" ({run})", rsuffix=f" ({cmp_run})", how="outer").reset_index()
-            
-            compare_summary_block = html.Div([
-                section_title("⚖ Comparação de Sumários Finais"),
-                dash_table.DataTable(
-                    data=comp_sum.to_dict("records"),
-                    columns=[{"name": c, "id": c} for c in comp_sum.columns],
-                    style_table={"overflowX": "auto"},
-                    style_header={"backgroundColor": HANDLE_COLOR, "color": "#fff",
-                                  "fontWeight": "600", "fontFamily": FONT_SANS,
-                                  "fontSize": "12px"},
-                    style_cell={"fontFamily": FONT_SANS, "fontSize": "12px",
-                                "padding": "8px", "textAlign": "left"},
-                ),
-            ], style={**card_style, "padding": "16px", "marginBottom": "16px"})
-
-    charts = html.Div([
-        two_col(fig_acc, fig_vac, id_prefix="base-acc"),
-        two_col(fig_los, fig_vlo, id_prefix="base-los"),
-        compare_block,
-        summary_block,
-        compare_summary_block,
-        table_folds,
-    ])
-
-    return kpis, charts
 
 
 # ══════════════════════════════════════════════════════════════════════════════

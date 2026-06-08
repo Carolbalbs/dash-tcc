@@ -1,0 +1,18 @@
+Classes;axiais_dentigero_augmentado, axiais_queratocisto_augmentado
+Total imagens;3499
+Otimizador;ADAM
+Modelo;InceptionV3
+;
+Fold;Accuracy (%)
+Fold 1;98.86
+Fold 2;98.86
+Fold 3;99.00
+Fold 4;99.43
+Fold 5;99.00
+;
+Métrica;Valor
+Média Accuracy;99.03%
+Desvio Padrão;0.21%
+IC 95% Inferior;98.74%
+IC 95% Superior;99.32%
+Tempo de execução (min);157.09

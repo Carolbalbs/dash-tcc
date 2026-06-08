@@ -14,10 +14,10 @@ from sklearn.linear_model import LinearRegression
 import pickle
 
 # Configuration
-CSV_PATH = "dimensoes-dataset/image_dimensions_dataset_novo.csv"
-MODEL_PATH = "Resultado_dataset-antigo/Treinamento_ADAM_InceptionV3_03-05-2026__18-08-53/models/best_modelFold3.keras"
-OUTPUT_DIR = "trained_data_odontogenic"
-IMG_SIZE = 299
+CSV_PATH = "data/dimensoes-dataset/image_dimensions_dataset_novo.csv"
+MODEL_PATH = "data/Resultado_dataset-antigo/Treinamento_ADAM_InceptionV3_03-05-2026__18-08-53/models/best_modelFold3.keras"
+OUTPUT_DIR = "data/trained_data_odontogenic"
+IMG_SIZE = 150
 
 if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
